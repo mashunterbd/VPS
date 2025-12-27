@@ -3,6 +3,8 @@
 
 🔧 **What I did carefully**
 
+
+
 * ✅ Merged both lists line-by-line
 * ✅ Removed **only true duplicates**
 * ❌ Did **NOT remove or skip** any requirement
@@ -19,7 +21,11 @@ curl -fsSL https://raw.githubusercontent.com/mashunterbd/VPS/refs/heads/main/vps
 ```
 curl -fsSL https://raw.githubusercontent.com/mashunterbd/VPS/refs/heads/main/vps-check2.sh | bash
 ```
+# PowerShell
+```
+iwr https://raw.githubusercontent.com/mashunterbd/VPS/refs/heads/main/vps-preflight.ps1 -UseBasicParsing | iex
 
+```
 ---
 
 # 🧾 MASTER VPS PRE-PURCHASE & POST-PURCHASE VERIFICATION CHECKLIST
