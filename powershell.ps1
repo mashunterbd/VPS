@@ -1,6 +1,6 @@
 # ============================================================
-# VPS PREFLIGHT CHECK - WINDOWS (ENHANCED + GPU COMPLETE)
-# Purpose: Comprehensive VPS/Server evaluation for purchase
+# VPS / SERVER PREFLIGHT INSPECTOR - WINDOWS (FINAL)
+# Purpose: Full system inspection for buying & auditing
 # ============================================================
 
 $PASS = 0
@@ -11,13 +11,13 @@ function Pass($m){ Write-Host "[PASS]  $m" -ForegroundColor Green;  $global:PASS
 function Fail($m){ Write-Host "[FAIL]  $m" -ForegroundColor Red;    $global:FAIL++ }
 function Warn($m){ Write-Host "[WARN]  $m" -ForegroundColor Yellow; $global:WARN++ }
 function Info($m){ Write-Host "`n==> $m" -ForegroundColor Cyan }
-function Show($l,$v){ Write-Host ("    {0,-25}: {1}" -f $l,$v) }
+function Show($l,$v){ Write-Host ("    {0,-28}: {1}" -f $l,$v) }
 
 Write-Host "============================================================"
-Write-Host " VPS PRE-PURCHASE & POST-PURCHASE CHECK (WINDOWS)"
-Write-Host " Enhanced Edition (Stable + GPU)"
+Write-Host " VPS / SERVER PREFLIGHT INSPECTOR (WINDOWS)"
+Write-Host " FINAL RECONCILED VERSION"
 Write-Host "============================================================"
-Write-Host "Scan started at: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+Write-Host "Scan started: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 
 # ------------------------------------------------------------
 Info "System Information"
@@ -28,13 +28,25 @@ Show "OS Name" $os.Caption
 Show "OS Architecture" $os.OSArchitecture
 Show "OS Build" $os.BuildNumber
 Show "Computer Name" $cs.Name
-Show "Manufacturer" $cs.Manufacturer
-Show "Model" $cs.Model
+Show "System Manufacturer" $cs.Manufacturer
+Show "System Model" $cs.Model
 Show "System Type" $cs.SystemType
 
 $uptime = (Get-Date) - $os.LastBootUpTime
 Show "Uptime" "$($uptime.Days)d $($uptime.Hours)h $($uptime.Minutes)m"
 Pass "System information collected"
+
+# ------------------------------------------------------------
+Info "Motherboard (BaseBoard)"
+$board = Get-CimInstance Win32_BaseBoard
+Show "Motherboard Brand" $board.Manufacturer
+Show "Motherboard Model" $board.Product
+
+if ($board.Manufacturer -match "OEM|Filled|Unknown") {
+    Warn "Motherboard details partially hidden (normal on VPS)"
+} else {
+    Pass "Motherboard information detected"
+}
 
 # ------------------------------------------------------------
 Info "CPU & Virtualization"
@@ -48,7 +60,13 @@ Show "L3 Cache" "$($cpu.L3CacheSize) KB"
 if ($cpu.VirtualizationFirmwareEnabled) {
     Pass "CPU virtualization enabled"
 } else {
-    Warn "CPU virtualization not exposed (normal on VPS)"
+    Warn "CPU virtualization not exposed"
+}
+
+if ($cs.Model -match "Virtual|VMware|KVM|Xen|HVM|QEMU|Hyper-V") {
+    Pass "Virtual machine environment detected"
+} else {
+    Warn "Bare metal or hypervisor string hidden"
 }
 
 # ------------------------------------------------------------
@@ -62,7 +80,7 @@ Show "Total RAM" "$totalRAM GB"
 Show "Used RAM" "$usedRAM GB ($usedPct%)"
 Show "Free RAM" "$freeRAM GB"
 
-if ($totalRAM -ge 2) { Pass "RAM sufficient for VPS" }
+if ($totalRAM -ge 2) { Pass "RAM sufficient" }
 elseif ($totalRAM -ge 1) { Warn "Low RAM ($totalRAM GB)" }
 else { Fail "Insufficient RAM ($totalRAM GB)" }
 
@@ -82,17 +100,16 @@ Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | ForEach-Object {
 }
 
 # ------------------------------------------------------------
-Info "Graphics (GPU Detection)"
+Info "Graphics (GPU)"
 $gpus = Get-CimInstance Win32_VideoController
 
-if ($gpus.Count -eq 0) {
-    Warn "No GPU detected (normal for most VPS)"
+if (!$gpus) {
+    Warn "No GPU detected (normal for VPS)"
 } else {
     foreach ($gpu in $gpus) {
         Show "GPU Model" $gpu.Name
-
         if ($gpu.AdapterRAM -and $gpu.AdapterRAM -gt 0) {
-            $vramGB = [math]::Round($gpu.AdapterRAM / 1GB,2)
+            $vramGB = [math]::Round($gpu.AdapterRAM/1GB,2)
             Show "GPU Memory" "$vramGB GB"
         } else {
             Show "GPU Memory" "Not reported"
@@ -109,12 +126,31 @@ if ($gpus.Count -eq 0) {
 }
 
 # ------------------------------------------------------------
-Info "Network & DNS Connectivity"
-if (Test-Connection 1.1.1.1 -Count 1 -Quiet) {
-    Pass "Internet connectivity OK"
-} else {
-    Fail "Internet connectivity failed"
+Info "Network Adapters"
+Get-CimInstance Win32_NetworkAdapter -Filter "NetEnabled=true" | ForEach-Object {
+    Show "Adapter Name" $_.Name
+    Show "MAC Address" $_.MACAddress
+    if ($_.Speed) {
+        Show "Link Speed" ("{0} Mbps" -f ($_.Speed/1MB))
+    } else {
+        Warn "Link speed not reported"
+    }
 }
+Pass "Network adapters inspected"
+
+# ------------------------------------------------------------
+Info "DNS Configuration"
+$dns = Get-DnsClientServerAddress -AddressFamily IPv4
+foreach ($d in $dns) {
+    Show "Interface" $d.InterfaceAlias
+    Show "DNS Servers" ($d.ServerAddresses -join ", ")
+}
+Pass "DNS servers listed"
+
+# ------------------------------------------------------------
+Info "Connectivity Tests"
+if (Test-Connection 1.1.1.1 -Count 1 -Quiet) { Pass "Internet connectivity OK" }
+else { Fail "Internet connectivity failed" }
 
 try {
     Resolve-DnsName google.com -ErrorAction Stop | Out-Null
@@ -126,22 +162,21 @@ try {
 # ------------------------------------------------------------
 Info "Public IP & Reverse DNS"
 $IP = $null
-$ipSources = @(
-    "https://ifconfig.me/ip",
-    "https://api.ipify.org",
-    "https://ipinfo.io/ip",
-    "https://icanhazip.com"
+$sources = @(
+  "https://ifconfig.me/ip",
+  "https://api.ipify.org",
+  "https://ipinfo.io/ip",
+  "https://icanhazip.com"
 )
 
-foreach ($src in $ipSources) {
-    try {
-        $resp = Invoke-WebRequest -Uri $src -UseBasicParsing -TimeoutSec 5
-        $candidate = $resp.Content.Trim()
-        if ($candidate -match '^\d{1,3}(\.\d{1,3}){3}$') {
-            $IP = $candidate
-            break
-        }
-    } catch {}
+foreach ($s in $sources) {
+  try {
+    $r = Invoke-WebRequest $s -UseBasicParsing -TimeoutSec 5
+    if ($r.Content.Trim() -match '^\d{1,3}(\.\d{1,3}){3}$') {
+        $IP = $r.Content.Trim()
+        break
+    }
+  } catch {}
 }
 
 if ($IP) {
@@ -152,8 +187,9 @@ if ($IP) {
 }
 
 try {
-    Resolve-DnsName $IP -Type PTR -ErrorAction Stop | Out-Null
-    Pass "Reverse DNS (PTR) exists"
+    $ptr = Resolve-DnsName $IP -Type PTR -ErrorAction Stop
+    Show "PTR Record" $ptr.NameHost
+    Pass "Reverse DNS exists"
 } catch {
     Fail "No reverse DNS (PTR)"
 }
@@ -161,17 +197,18 @@ try {
 # ------------------------------------------------------------
 Info "Outbound SMTP (CRITICAL)"
 $smtpOK = $false
-$targets = @(
-    @{H="smtp.gmail.com";P=587},
-    @{H="smtp.gmail.com";P=465},
-    @{H="gmail-smtp-in.l.google.com";P=25}
+$ports = @(
+ @{H="smtp.gmail.com";P=587},
+ @{H="smtp.gmail.com";P=465},
+ @{H="gmail-smtp-in.l.google.com";P=25}
 )
 
-foreach ($t in $targets) {
-    if (Test-NetConnection $t.H -Port $t.P -InformationLevel Quiet) {
-        Pass "SMTP port $($t.P) reachable"
+foreach ($p in $ports) {
+    if (Test-NetConnection $p.H -Port $p.P -InformationLevel Quiet) {
+        Pass "SMTP port $($p.P) reachable"
         $smtpOK = $true
-        break
+    } else {
+        Warn "SMTP port $($p.P) blocked"
     }
 }
 
@@ -194,13 +231,13 @@ Show "FAIL" $FAIL
 Show "WARN" $WARN
 Write-Host "---------------------------------------------"
 
-if ($FAIL -eq 0 -and $PASS -ge 15) {
+if ($FAIL -eq 0 -and $PASS -ge 18) {
     Write-Host "FINAL VERDICT: SAFE TO BUY & USE LONG-TERM" -ForegroundColor Green
 } elseif ($FAIL -le 2) {
     Write-Host "FINAL VERDICT: CONDITIONAL - REVIEW WARNINGS" -ForegroundColor Yellow
 } else {
-    Write-Host "FINAL VERDICT: DO NOT BUY THIS VPS" -ForegroundColor Red
+    Write-Host "FINAL VERDICT: DO NOT BUY THIS SYSTEM" -ForegroundColor Red
 }
 
-Write-Host "Scan completed at: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+Write-Host "Scan completed: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 Write-Host "============================================================"
