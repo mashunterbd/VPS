@@ -12,6 +12,11 @@
 This is now a **MASTER VPS BUYING & VERIFICATION CHECKLIST (2025-READY)**
 You can use it **before buying**, **right after buying**, and **for long-term validation**.
 
+# ✅ How to use
+```
+curl -fsSL https://raw.githubusercontent.com/mashunterbd/VPS/refs/heads/main/vps-check.sh | bash
+```
+
 ---
 
 # 🧾 MASTER VPS PRE-PURCHASE & POST-PURCHASE VERIFICATION CHECKLIST
