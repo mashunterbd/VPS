@@ -1,5 +1,5 @@
 # ============================================================
-# VPS PREFLIGHT CHECK - WINDOWS (FINAL STABLE)
+# VPS PREFLIGHT CHECK - WINDOWS (FINAL CLEAN VERSION)
 # Purpose : Decide if a VPS / Server is safe for long-term use
 # ============================================================
 
@@ -28,6 +28,7 @@ $cpu = Get-CimInstance Win32_Processor
 Write-Host "CPU Model : $($cpu.Name)"
 Write-Host "Cores     : $($cpu.NumberOfCores)"
 Write-Host "Threads   : $($cpu.NumberOfLogicalProcessors)"
+
 if ($cpu.VirtualizationFirmwareEnabled) {
     Pass "CPU virtualization enabled"
 } else {
@@ -39,20 +40,18 @@ Info "Memory (RAM)"
 $totalRAM = [Math]::Round($os.TotalVisibleMemorySize / 1MB,2)
 $freeRAM  = [Math]::Round($os.FreePhysicalMemory / 1MB,2)
 $usedRAM  = [Math]::Round($totalRAM - $freeRAM,2)
+
 Write-Host "Total RAM : $totalRAM GB"
 Write-Host "Used RAM  : $usedRAM GB"
 Write-Host "Free RAM  : $freeRAM GB"
 Pass "RAM detected"
 
 # ------------------------------------------------------------
-Info "Motherboard & BIOS"
+Info "Motherboard Information (best-effort)"
 $board = Get-CimInstance Win32_BaseBoard
-$bios  = Get-CimInstance Win32_BIOS
 Write-Host "Board Manufacturer : $($board.Manufacturer)"
 Write-Host "Board Model        : $($board.Product)"
-Write-Host "BIOS Vendor        : $($bios.Manufacturer)"
-Write-Host "BIOS Year          : $($bios.ReleaseDate.Year)"
-Warn "Motherboard details may be hidden on VPS"
+Warn "Motherboard generation/date not required for VPS decision"
 
 # ------------------------------------------------------------
 Info "Storage & Disk Usage"
@@ -60,29 +59,33 @@ Get-CimInstance Win32_DiskDrive | ForEach-Object {
     Write-Host "Disk Model : $($_.Model)"
     Write-Host "Disk Size  : $([Math]::Round($_.Size / 1GB,2)) GB"
 }
+
 Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | ForEach-Object {
-    $used = [Math]::Round((($_.Size - $_.FreeSpace) / $_.Size) * 100,2)
-    Write-Host "Volume $($_.DeviceID) : $used% used"
+    $usedPct = [Math]::Round((($_.Size - $_.FreeSpace) / $_.Size) * 100,2)
+    Write-Host "Volume $($_.DeviceID) : $usedPct% used"
 }
 Pass "Storage detected & usage calculated"
 
 # ------------------------------------------------------------
-Info "GPU (Not required for VPS)"
+Info "Graphics (GPU - not required for VPS)"
 Get-CimInstance Win32_VideoController | ForEach-Object {
     Write-Host "GPU Model : $($_.Name)"
     if ($_.AdapterRAM) {
         Write-Host "GPU RAM   : $([Math]::Round($_.AdapterRAM / 1GB,2)) GB"
     }
 }
-Warn "GPU not required for VPS workloads"
+Warn "Dedicated GPU not required for VPS workloads"
 
 # ------------------------------------------------------------
-Info "Network & DNS"
-if (Test-Connection 1.1.1.1 -Count 1 -Quiet) { Pass "Internet connectivity OK" }
-else { Fail "Internet connectivity failed" }
+Info "Network & DNS Connectivity"
+if (Test-Connection 1.1.1.1 -Count 1 -Quiet) {
+    Pass "Internet connectivity OK"
+} else {
+    Fail "Internet connectivity failed"
+}
 
 try {
-    Resolve-DnsName google.com | Out-Null
+    Resolve-DnsName google.com -ErrorAction Stop | Out-Null
     Pass "DNS resolution working"
 } catch {
     Fail "DNS resolution failed"
@@ -99,9 +102,10 @@ $ipSources = @(
 
 foreach ($src in $ipSources) {
     try {
-        $r = Invoke-WebRequest $src -UseBasicParsing -TimeoutSec 5
-        if ($r.Content.Trim() -match '^\d{1,3}(\.\d{1,3}){3}$') {
-            $IP = $r.Content.Trim()
+        $resp = Invoke-WebRequest -Uri $src -UseBasicParsing -TimeoutSec 5
+        $candidate = $resp.Content.Trim()
+        if ($candidate -match '^\d{1,3}(\.\d{1,3}){3}$') {
+            $IP = $candidate
             break
         }
     } catch {}
@@ -115,7 +119,7 @@ if ($IP) {
 }
 
 try {
-    Resolve-DnsName $IP -Type PTR | Out-Null
+    Resolve-DnsName $IP -Type PTR -ErrorAction Stop | Out-Null
     Pass "Reverse DNS (PTR) exists"
 } catch {
     Fail "No reverse DNS (PTR)"
@@ -138,10 +142,12 @@ foreach ($t in $targets) {
     }
 }
 
-if (-not $smtpOK) { Fail "All outbound SMTP ports blocked" }
+if (-not $smtpOK) {
+    Fail "All outbound SMTP ports blocked"
+}
 
 # ------------------------------------------------------------
-Info "Docker / Containers"
+Info "Docker / Container Readiness"
 if (Get-Command docker -ErrorAction SilentlyContinue) {
     Pass "Docker available"
 } else {
