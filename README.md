@@ -26,6 +26,12 @@ curl -fsSL https://raw.githubusercontent.com/mashunterbd/VPS/refs/heads/main/vps
 iwr https://raw.githubusercontent.com/mashunterbd/VPS/refs/heads/main/vps-preflight.ps1 -UseBasicParsing | iex
 
 ```
+# Get Motherboard Information
+```sh
+==> Motherboard (BaseBoard)
+    Motherboard Brand           : Brand
+    Motherboard Model           : Model
+```
 ```
 iwr https://raw.githubusercontent.com/mashunterbd/VPS/refs/heads/main/powershell.ps1 -UseBasicParsing | iex
 
