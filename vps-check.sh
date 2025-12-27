@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
-
 # ============================================================
-# VPS PRE-PURCHASE & POST-PURCHASE VERIFICATION SCRIPT
-# Purpose: Detect VPS limitations BEFORE long-term usage
-# Focus: Email (SMTP), Web Hosting, Automation, APIs, Security
-# Compatible with: Ubuntu, Debian, CentOS, Rocky, Alma
+# VPS INFRASTRUCTURE PRE-FLIGHT CHECK (LINUX)
+# Purpose : Decide if a VPS is SAFE for long-term usage
+# Includes: Hardware, Storage, Network, SMTP, Automation
 # ============================================================
 
 set +e
+TIMEOUT=8
 
-PASS_COUNT=0
-FAIL_COUNT=0
-MANUAL_COUNT=0
+PASS=0
+FAIL=0
+MANUAL=0
 
 GREEN="\e[32m"
 RED="\e[31m"
@@ -19,161 +18,210 @@ YELLOW="\e[33m"
 BLUE="\e[34m"
 RESET="\e[0m"
 
-pass()   { echo -e "${GREEN}✔ PASS${RESET}  $1"; ((PASS_COUNT++)); }
-fail()   { echo -e "${RED}✖ FAIL${RESET}  $1"; ((FAIL_COUNT++)); }
-manual() { echo -e "${YELLOW}⚠ MANUAL${RESET} $1"; ((MANUAL_COUNT++)); }
+pass()   { echo -e "${GREEN}[PASS]${RESET}  $1"; ((PASS++)); }
+fail()   { echo -e "${RED}[FAIL]${RESET}  $1"; ((FAIL++)); }
+manual() { echo -e "${YELLOW}[WARN]${RESET}  $1"; ((MANUAL++)); }
+info()   { echo -e "\n${BLUE}==>${RESET} $1"; }
 
-echo -e "${BLUE}"
-echo "============================================================"
-echo " VPS PRE-PURCHASE & POST-PURCHASE AUTOMATED CHECK"
-echo "============================================================"
-echo -e "${RESET}"
+timeout_cmd() {
+  timeout "$TIMEOUT" bash -c "$1"
+}
+
+echo -e "${BLUE}============================================================"
+echo " VPS PRE-PURCHASE & POST-PURCHASE CHECK (LINUX)"
+echo "============================================================${RESET}"
 
 # ------------------------------------------------------------
-echo -e "\n[1] SYSTEM & OS DETECTION (Why: compatibility & stability)"
+info "Operating System"
+OS=$(grep PRETTY_NAME /etc/os-release 2>/dev/null | cut -d= -f2 | tr -d '"')
+[[ -n "$OS" ]] && echo "OS: $OS" && pass "Operating system detected" || manual "OS information unavailable"
 
-if command -v lsb_release &>/dev/null; then
-    OS=$(lsb_release -ds)
-elif [ -f /etc/os-release ]; then
-    OS=$(grep PRETTY_NAME /etc/os-release | cut -d= -f2 | tr -d '"')
+# ------------------------------------------------------------
+info "CPU & Virtualization"
+CPU_MODEL=$(lscpu | awk -F: '/Model name/ {print $2}' | xargs)
+CORES=$(lscpu | awk -F: '/Core\(s\) per socket/ {print $2}' | xargs)
+THREADS=$(lscpu | awk -F: '/CPU\(s\)/ {print $2}' | xargs)
+
+echo "CPU Model : $CPU_MODEL"
+echo "Cores     : $CORES"
+echo "Threads   : $THREADS"
+pass "CPU detected"
+
+if lscpu | grep -qi virtualization; then
+  pass "CPU virtualization supported"
 else
-    OS="Unknown Linux"
+  manual "CPU virtualization not exposed"
 fi
 
-echo "Detected OS: $OS"
-pass "Operating system detected"
+# ------------------------------------------------------------
+info "Memory (RAM)"
+TOTAL_RAM=$(free -g | awk '/Mem:/ {print $2}')
+USED_RAM=$(free -g | awk '/Mem:/ {print $3}')
+FREE_RAM=$(free -g | awk '/Mem:/ {print $4}')
+
+echo "Total RAM : ${TOTAL_RAM} GB"
+echo "Used RAM  : ${USED_RAM} GB"
+echo "Free RAM  : ${FREE_RAM} GB"
+pass "RAM detected"
 
 # ------------------------------------------------------------
-echo -e "\n[2] BASIC NETWORK CONNECTIVITY (Why: DNS & outbound traffic)"
+info "System / BIOS Information"
+SYS_VENDOR=$(cat /sys/devices/virtual/dmi/id/sys_vendor 2>/dev/null)
+SYS_PRODUCT=$(cat /sys/devices/virtual/dmi/id/product_name 2>/dev/null)
+BIOS_VENDOR=$(cat /sys/devices/virtual/dmi/id/bios_vendor 2>/dev/null)
+BIOS_DATE=$(cat /sys/devices/virtual/dmi/id/bios_date 2>/dev/null)
 
-ping -c 1 1.1.1.1 &>/dev/null \
-  && pass "ICMP connectivity to internet (1.1.1.1)" \
-  || fail "ICMP connectivity failed (possible firewall/network issue)"
+echo "System Vendor : ${SYS_VENDOR:-Unknown}"
+echo "System Model  : ${SYS_PRODUCT:-Unknown}"
+echo "BIOS Vendor   : ${BIOS_VENDOR:-Unknown}"
+echo "BIOS Date     : ${BIOS_DATE:-Unknown}"
+manual "Motherboard / BIOS info may be hidden on VPS"
 
-ping -c 1 google.com &>/dev/null \
-  && pass "DNS resolution works (google.com)" \
+# ------------------------------------------------------------
+info "Storage (Disk & Usage)"
+lsblk -o NAME,MODEL,SIZE,ROTA,TYPE | while read -r line; do echo "$line"; done
+
+if lsblk -o ROTA | grep -q "0"; then
+  pass "SSD / NVMe storage detected"
+else
+  fail "Rotational disk (HDD) detected"
+fi
+
+df -h --output=source,size,used,avail,pcent,target | sed 1d
+pass "Filesystem usage calculated"
+
+# ------------------------------------------------------------
+info "GPU Detection (not required for VPS)"
+if command -v lspci &>/dev/null && lspci | grep -qi vga; then
+  lspci | grep -i vga
+  manual "GPU detected (not required for VPS)"
+else
+  manual "No GPU detected (normal for VPS)"
+fi
+
+# ------------------------------------------------------------
+info "Virtual Machine Detection"
+if grep -qi hypervisor /proc/cpuinfo; then
+  pass "Virtualized environment detected"
+else
+  manual "Bare metal or hypervisor not exposed"
+fi
+
+# ------------------------------------------------------------
+info "Basic Network & DNS"
+timeout_cmd "ping -c 1 1.1.1.1 &>/dev/null" \
+  && pass "Internet connectivity OK" \
+  || fail "Internet connectivity failed"
+
+timeout_cmd "ping -c 1 google.com &>/dev/null" \
+  && pass "DNS resolution working" \
   || fail "DNS resolution failed"
 
 # ------------------------------------------------------------
-echo -e "\n[3] PUBLIC IP & rDNS PRECHECK (Why: email reputation)"
+info "Public IP & Reverse DNS"
+PUBLIC_IP=$(timeout_cmd "curl -fsS ifconfig.me/ip" || timeout_cmd "curl -fsS api.ipify.org")
 
-PUBLIC_IP=$(curl -fsS ifconfig.me 2>/dev/null || curl -fsS ipinfo.io/ip 2>/dev/null)
-
-if [[ -n "$PUBLIC_IP" ]]; then
-    echo "Public IP: $PUBLIC_IP"
-    pass "Public IP detected"
+if [[ "$PUBLIC_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "Public IP: $PUBLIC_IP"
+  pass "Public IP detected"
 else
-    manual "Could not auto-detect public IP (check manually)"
+  manual "Public IP detection failed"
+fi
+
+PTR=$(timeout_cmd "dig -x $PUBLIC_IP +short")
+[[ -n "$PTR" ]] && pass "Reverse DNS exists ($PTR)" || fail "No reverse DNS (PTR)"
+
+# ------------------------------------------------------------
+info "Geo Location (Country & City)"
+GEO_SUCCESS=false
+
+# Primary: ipinfo.io
+GEO_INFO=$(timeout_cmd "curl -fsS 'https://ipinfo.io/$PUBLIC_IP/json'")
+if [[ $? -eq 0 ]] && [[ -n "$GEO_INFO" ]]; then
+  COUNTRY=$(echo "$GEO_INFO" | grep '"country"' | cut -d'"' -f4)
+  REGION=$(echo "$GEO_INFO" | grep '"region"' | cut -d'"' -f4)
+  CITY=$(echo "$GEO_INFO" | grep '"city"' | cut -d'"' -f4)
+  ISP=$(echo "$GEO_INFO" | grep '"org"' | cut -d'"' -f4)
+  
+  echo "Country   : ${COUNTRY:-Unknown}"
+  echo "Region    : ${REGION:-Unknown}"
+  echo "City      : ${CITY:-Unknown}"
+  echo "ISP       : ${ISP:-Unknown}"
+  pass "Geo-location detected (ipinfo.io)"
+  GEO_SUCCESS=true
+fi
+
+# Fallback: ip-api.com
+if [[ "$GEO_SUCCESS" = false ]]; then
+  GEO_INFO=$(timeout_cmd "curl -fsS 'http://ip-api.com/json/$PUBLIC_IP'")
+  if [[ $? -eq 0 ]] && [[ -n "$GEO_INFO" ]]; then
+    COUNTRY=$(echo "$GEO_INFO" | grep '"country"' | cut -d'"' -f4)
+    REGION=$(echo "$GEO_INFO" | grep '"regionName"' | cut -d'"' -f4)
+    CITY=$(echo "$GEO_INFO" | grep '"city"' | cut -d'"' -f4)
+    ISP=$(echo "$GEO_INFO" | grep '"isp"' | cut -d'"' -f4)
+    
+    echo "Country   : ${COUNTRY:-Unknown}"
+    echo "Region    : ${REGION:-Unknown}"
+    echo "City      : ${CITY:-Unknown}"
+    echo "ISP       : ${ISP:-Unknown}"
+    pass "Geo-location detected (ip-api.com)"
+    GEO_SUCCESS=true
+  fi
+fi
+
+if [[ "$GEO_SUCCESS" = false ]]; then
+  manual "Geo-location lookup failed (manual check recommended)"
 fi
 
 # ------------------------------------------------------------
-echo -e "\n[4] OUTBOUND SMTP PORT CHECK (CRITICAL FOR EMAIL)"
-
-SMTP_PASS=false
-
-test_port() {
-    local host=$1 port=$2
-    timeout 5 bash -c "echo > /dev/tcp/$host/$port" &>/dev/null
-}
-
-declare -A SMTP_TESTS=(
-  ["smtp.gmail.com"]=587
-  ["smtp.gmail.com_alt"]=465
-  ["gmail-smtp-in.l.google.com"]=25
-)
-
-for key in "${!SMTP_TESTS[@]}"; do
-    host="${key%_alt}"
-    port="${SMTP_TESTS[$key]}"
-    echo "Testing outbound SMTP: $host:$port"
-    if test_port "$host" "$port"; then
-        pass "Outbound SMTP port $port reachable ($host)"
-        SMTP_PASS=true
-        break
-    else
-        echo "  -> Failed, trying next alternative..."
-    fi
+info "Outbound SMTP (CRITICAL)"
+SMTP_OK=false
+for target in smtp.gmail.com:587 smtp.gmail.com:465 gmail-smtp-in.l.google.com:25; do
+  host=${target%:*}
+  port=${target#*:}
+  echo "Testing SMTP $host:$port"
+  timeout_cmd "echo > /dev/tcp/$host/$port" &>/dev/null \
+    && pass "SMTP port $port reachable" && SMTP_OK=true && break
 done
 
-$SMTP_PASS || fail "All outbound SMTP ports blocked (25/587/465)"
+$SMTP_OK || fail "All outbound SMTP ports blocked"
 
 # ------------------------------------------------------------
-echo -e "\n[5] THIRD-PARTY SMTP RELAY COMPATIBILITY"
-
-RELAYS=("smtp-relay.brevo.com" "smtp.mailgun.org" "email-smtp.us-east-1.amazonaws.com")
-RELAY_OK=false
-
-for r in "${RELAYS[@]}"; do
-    echo "Testing relay: $r:587"
-    if test_port "$r" 587; then
-        pass "External SMTP relay reachable ($r)"
-        RELAY_OK=true
-        break
-    fi
-done
-
-$RELAY_OK || manual "SMTP relay unreachable (provider-level SMTP block likely)"
-
-# ------------------------------------------------------------
-echo -e "\n[6] HTTPS & API ACCESS (Why: WordPress, n8n, integrations)"
-
-curl -fsS https://api.github.com &>/dev/null \
-  && pass "Outbound HTTPS & APIs allowed (GitHub API)" \
-  || fail "Outbound HTTPS blocked (automation will fail)"
-
-# ------------------------------------------------------------
-echo -e "\n[7] FIREWALL CONTROL CHECK"
-
-if command -v ufw &>/dev/null; then
-    ufw status &>/dev/null \
-      && pass "UFW firewall accessible (admin control)" \
-      || manual "UFW exists but status unavailable"
-elif command -v iptables &>/dev/null; then
-    iptables -L &>/dev/null \
-      && pass "iptables accessible (admin control)" \
-      || manual "iptables exists but not readable"
+info "Postfix (conditional)"
+if $SMTP_OK && command -v postqueue &>/dev/null; then
+  QUEUE=$(postqueue -p | tail -n +2)
+  [[ -z "$QUEUE" ]] && pass "Postfix queue empty" || manual "Postfix queue not empty"
 else
-    manual "No firewall tool detected"
+  manual "Postfix test skipped"
 fi
 
 # ------------------------------------------------------------
-echo -e "\n[8] DISK TYPE & PERFORMANCE (Why: mail queues, DB, logs)"
-
-if command -v lsblk &>/dev/null; then
-    if lsblk -o ROTA | grep -q "0"; then
-        pass "SSD/NVMe storage detected"
-    else
-        fail "Rotational disk detected (HDD)"
-    fi
-else
-    manual "lsblk not available (check disk type manually)"
-fi
+info "Outbound HTTPS & API Access"
+timeout_cmd "curl -fsS https://api.github.com &>/dev/null" \
+  && pass "Outbound HTTPS allowed" \
+  || fail "Outbound HTTPS blocked"
 
 # ------------------------------------------------------------
-echo -e "\n[9] DOCKER / CONTAINER READINESS (Why: n8n, modern stacks)"
-
-if command -v docker &>/dev/null; then
-    pass "Docker available"
-elif [ -d /sys/fs/cgroup ]; then
-    pass "Kernel supports containers (cgroups present)"
-else
-    fail "Container support not detected"
-fi
+info "Docker / Container Readiness"
+command -v docker &>/dev/null \
+  && pass "Docker available" \
+  || [[ -d /sys/fs/cgroup ]] \
+     && pass "Kernel supports containers" \
+     || manual "Container support unclear"
 
 # ------------------------------------------------------------
-echo -e "\n================ FINAL EVALUATION ================="
+echo -e "${BLUE}================ FINAL RESULT =================${RESET}"
+echo "PASS   : $PASS"
+echo "FAIL   : $FAIL"
+echo "WARN   : $MANUAL"
+echo "---------------------------------------------"
 
-echo "PASS:    $PASS_COUNT"
-echo "FAIL:    $FAIL_COUNT"
-echo "MANUAL:  $MANUAL_COUNT"
-echo "--------------------------------------------------"
-
-if [[ $FAIL_COUNT -eq 0 && $PASS_COUNT -ge 8 ]]; then
-    echo -e "${GREEN}FINAL VERDICT: SAFE TO BUY & USE LONG-TERM${RESET}"
-elif [[ $FAIL_COUNT -le 2 ]]; then
-    echo -e "${YELLOW}FINAL VERDICT: CONDITIONAL (Review failed items)${RESET}"
+if [[ $FAIL -eq 0 && $PASS -ge 12 ]]; then
+  echo -e "${GREEN}FINAL VERDICT: SAFE TO BUY & USE LONG-TERM${RESET}"
+elif [[ $FAIL -le 2 ]]; then
+  echo -e "${YELLOW}FINAL VERDICT: CONDITIONAL - REVIEW WARNINGS${RESET}"
 else
-    echo -e "${RED}FINAL VERDICT: DO NOT BUY THIS VPS${RESET}"
+  echo -e "${RED}FINAL VERDICT: DO NOT BUY THIS VPS${RESET}"
 fi
 
-echo "=================================================="
+echo "============================================================"
