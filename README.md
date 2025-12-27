@@ -26,6 +26,10 @@ curl -fsSL https://raw.githubusercontent.com/mashunterbd/VPS/refs/heads/main/vps
 iwr https://raw.githubusercontent.com/mashunterbd/VPS/refs/heads/main/vps-preflight.ps1 -UseBasicParsing | iex
 
 ```
+```
+iwr https://raw.githubusercontent.com/mashunterbd/VPS/refs/heads/main/powershell.ps1 -UseBasicParsing | iex
+
+```
 ---
 
 # 🧾 MASTER VPS PRE-PURCHASE & POST-PURCHASE VERIFICATION CHECKLIST
