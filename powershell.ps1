@@ -195,6 +195,39 @@ try {
 }
 
 # ------------------------------------------------------------
+Info "Geo Location (Country & City)"
+
+$geoSuccess = $false
+
+# Primary: ipinfo.io
+try {
+    $geo = Invoke-RestMethod -Uri "https://ipinfo.io/$IP/json" -TimeoutSec 6
+    Show "Country" $geo.country
+    Show "Region"  $geo.region
+    Show "City"    $geo.city
+    Show "ISP"     $geo.org
+    Pass "Geo-location detected (ipinfo.io)"
+    $geoSuccess = $true
+} catch {}
+
+# Fallback: ip-api.com
+if (-not $geoSuccess) {
+    try {
+        $geo = Invoke-RestMethod -Uri "http://ip-api.com/json/$IP" -TimeoutSec 6
+        Show "Country" $geo.country
+        Show "Region"  $geo.regionName
+        Show "City"    $geo.city
+        Show "ISP"     $geo.isp
+        Pass "Geo-location detected (ip-api.com)"
+        $geoSuccess = $true
+    } catch {}
+}
+
+if (-not $geoSuccess) {
+    Warn "Geo-location lookup failed (manual check recommended)"
+}
+
+# ------------------------------------------------------------
 Info "Outbound SMTP (CRITICAL)"
 $smtpOK = $false
 $ports = @(
