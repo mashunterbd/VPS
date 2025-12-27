@@ -132,6 +132,48 @@ PTR=$(timeout_cmd "dig -x $PUBLIC_IP +short")
 [[ -n "$PTR" ]] && pass "Reverse DNS exists ($PTR)" || fail "No reverse DNS (PTR)"
 
 # ------------------------------------------------------------
+info "Geo Location (Country & City)"
+GEO_SUCCESS=false
+
+# Primary: ipinfo.io
+GEO_INFO=$(timeout_cmd "curl -fsS 'https://ipinfo.io/$PUBLIC_IP/json'")
+if [[ $? -eq 0 ]] && [[ -n "$GEO_INFO" ]]; then
+  COUNTRY=$(echo "$GEO_INFO" | grep '"country"' | cut -d'"' -f4)
+  REGION=$(echo "$GEO_INFO" | grep '"region"' | cut -d'"' -f4)
+  CITY=$(echo "$GEO_INFO" | grep '"city"' | cut -d'"' -f4)
+  ISP=$(echo "$GEO_INFO" | grep '"org"' | cut -d'"' -f4)
+  
+  echo "Country   : ${COUNTRY:-Unknown}"
+  echo "Region    : ${REGION:-Unknown}"
+  echo "City      : ${CITY:-Unknown}"
+  echo "ISP       : ${ISP:-Unknown}"
+  pass "Geo-location detected (ipinfo.io)"
+  GEO_SUCCESS=true
+fi
+
+# Fallback: ip-api.com
+if [[ "$GEO_SUCCESS" = false ]]; then
+  GEO_INFO=$(timeout_cmd "curl -fsS 'http://ip-api.com/json/$PUBLIC_IP'")
+  if [[ $? -eq 0 ]] && [[ -n "$GEO_INFO" ]]; then
+    COUNTRY=$(echo "$GEO_INFO" | grep '"country"' | cut -d'"' -f4)
+    REGION=$(echo "$GEO_INFO" | grep '"regionName"' | cut -d'"' -f4)
+    CITY=$(echo "$GEO_INFO" | grep '"city"' | cut -d'"' -f4)
+    ISP=$(echo "$GEO_INFO" | grep '"isp"' | cut -d'"' -f4)
+    
+    echo "Country   : ${COUNTRY:-Unknown}"
+    echo "Region    : ${REGION:-Unknown}"
+    echo "City      : ${CITY:-Unknown}"
+    echo "ISP       : ${ISP:-Unknown}"
+    pass "Geo-location detected (ip-api.com)"
+    GEO_SUCCESS=true
+  fi
+fi
+
+if [[ "$GEO_SUCCESS" = false ]]; then
+  manual "Geo-location lookup failed (manual check recommended)"
+fi
+
+# ------------------------------------------------------------
 info "Outbound SMTP (CRITICAL)"
 SMTP_OK=false
 for target in smtp.gmail.com:587 smtp.gmail.com:465 gmail-smtp-in.l.google.com:25; do
