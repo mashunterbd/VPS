@@ -1,7 +1,7 @@
 # ============================================================
-# VPS PREFLIGHT CHECK - WINDOWS (REFINED VERSION)
-# Purpose : Decide if a VPS is SAFE for long-term use
-# Output  : Clean, ASCII-safe, professional
+# VPS PREFLIGHT CHECK - WINDOWS (FULL SYSTEM VERSION)
+# Purpose : Decide if a VPS is SAFE for long-term usage
+# Includes: Hardware, Storage, Network, SMTP, Automation
 # ============================================================
 
 $PASS = 0
@@ -10,7 +10,7 @@ $MANUAL = 0
 
 function Pass($msg)   { Write-Host "[PASS]  $msg" -ForegroundColor Green;  $global:PASS++ }
 function Fail($msg)   { Write-Host "[FAIL]  $msg" -ForegroundColor Red;    $global:FAIL++ }
-function Manual($msg) { Write-Host "[WARN]  $msg" -ForegroundColor Yellow; $global:MANUAL++ }
+function Warn($msg)   { Write-Host "[WARN]  $msg" -ForegroundColor Yellow; $global:MANUAL++ }
 function Info($msg)   { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 
 Write-Host "============================================================"
@@ -18,29 +18,116 @@ Write-Host " VPS PRE-PURCHASE & POST-PURCHASE CHECK (WINDOWS)"
 Write-Host "============================================================"
 
 # ------------------------------------------------------------
-Info "Operating System Detection (compatibility check)"
+Info "Operating System"
 $os = Get-CimInstance Win32_OperatingSystem
-Write-Host "Detected OS: $($os.Caption)"
+Write-Host "OS: $($os.Caption) ($($os.OSArchitecture))"
 Pass "Operating system detected"
 
 # ------------------------------------------------------------
-Info "Basic Network & DNS Connectivity"
-if (Test-Connection 1.1.1.1 -Count 1 -Quiet) {
-    Pass "ICMP internet connectivity OK"
+Info "CPU & Virtualization"
+$cpu = Get-CimInstance Win32_Processor
+Write-Host "CPU Model : $($cpu.Name)"
+Write-Host "Cores     : $($cpu.NumberOfCores)"
+Write-Host "Threads   : $($cpu.NumberOfLogicalProcessors)"
+
+$virt = $cpu.VirtualizationFirmwareEnabled
+if ($virt -eq $true) {
+    Pass "CPU virtualization enabled"
 } else {
-    Fail "No ICMP connectivity (network or firewall issue)"
+    Warn "CPU virtualization not exposed or disabled"
+}
+
+# ------------------------------------------------------------
+Info "Memory (RAM)"
+$totalRAM = [Math]::Round($os.TotalVisibleMemorySize / 1MB,2)
+$freeRAM  = [Math]::Round($os.FreePhysicalMemory / 1MB,2)
+$usedRAM  = [Math]::Round($totalRAM - $freeRAM,2)
+
+Write-Host "Total RAM : $totalRAM GB"
+Write-Host "Used RAM  : $usedRAM GB"
+Write-Host "Free RAM  : $freeRAM GB"
+
+Pass "RAM detected successfully"
+
+# ------------------------------------------------------------
+Info "Motherboard & BIOS"
+$board = Get-CimInstance Win32_BaseBoard
+$bios  = Get-CimInstance Win32_BIOS
+
+Write-Host "Board Manufacturer : $($board.Manufacturer)"
+Write-Host "Board Model        : $($board.Product)"
+Write-Host "BIOS Vendor        : $($bios.Manufacturer)"
+Write-Host "BIOS Year          : $($bios.ReleaseDate.Substring(0,4))"
+
+Warn "Motherboard generation often hidden on VPS"
+
+# ------------------------------------------------------------
+Info "Storage (Disk & Usage)"
+$disks = Get-CimInstance Win32_DiskDrive
+foreach ($d in $disks) {
+    Write-Host "Disk Model : $($d.Model)"
+    Write-Host "Disk Size  : $([Math]::Round($d.Size / 1GB,2)) GB"
+    if ($d.MediaType) {
+        Write-Host "Disk Type  : $($d.MediaType)"
+    } else {
+        Warn "Disk type not exposed (likely virtual disk)"
+    }
+}
+
+$vol = Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3"
+foreach ($v in $vol) {
+    $size = [Math]::Round($v.Size / 1GB,2)
+    $free = [Math]::Round($v.FreeSpace / 1GB,2)
+    $used = [Math]::Round((($size - $free) / $size) * 100,2)
+
+    Write-Host "Volume $($v.DeviceID) : $used% used, $free GB free"
+}
+
+Pass "Storage detected & usage calculated"
+
+# ------------------------------------------------------------
+Info "Graphics (GPU)"
+$gpu = Get-CimInstance Win32_VideoController
+foreach ($g in $gpu) {
+    Write-Host "GPU Model : $($g.Name)"
+    if ($g.AdapterRAM) {
+        Write-Host "GPU RAM   : $([Math]::Round($g.AdapterRAM / 1GB,2)) GB"
+    } else {
+        Warn "GPU memory not exposed"
+    }
+}
+
+Warn "Dedicated GPU not required for VPS workloads"
+
+# ------------------------------------------------------------
+Info "Virtual Machine Detection"
+$cs = Get-CimInstance Win32_ComputerSystem
+Write-Host "System Manufacturer : $($cs.Manufacturer)"
+Write-Host "System Model        : $($cs.Model)"
+
+if ($cs.Model -match "Virtual|KVM|VMware|Hyper-V") {
+    Pass "Virtual machine environment detected"
+} else {
+    Warn "Bare metal or unknown virtualization"
+}
+
+# ------------------------------------------------------------
+Info "Network & DNS Connectivity"
+if (Test-Connection 1.1.1.1 -Count 1 -Quiet) {
+    Pass "Internet connectivity OK"
+} else {
+    Fail "Internet connectivity failed"
 }
 
 try {
-    Resolve-DnsName google.com -ErrorAction Stop | Out-Null
+    Resolve-DnsName google.com | Out-Null
     Pass "DNS resolution working"
 } catch {
     Fail "DNS resolution failed"
 }
 
 # ------------------------------------------------------------
-Info "Public IP & Reverse DNS (email reputation)"
-
+Info "Public IP & Reverse DNS"
 $IP = $null
 $IpSources = @(
     "https://ifconfig.me/ip",
@@ -50,119 +137,48 @@ $IpSources = @(
 
 foreach ($src in $IpSources) {
     try {
-        Write-Host "Trying IP source: $src"
-        $resp = Invoke-WebRequest -Uri $src -UseBasicParsing -TimeoutSec 5
+        $resp = Invoke-WebRequest $src -UseBasicParsing -TimeoutSec 5
         $candidate = $resp.Content.Trim()
         if ($candidate -match '^\d{1,3}(\.\d{1,3}){3}$') {
             $IP = $candidate
             break
         }
-    } catch {
-        Write-Host "  -> Failed, trying next source..."
-    }
+    } catch {}
 }
 
 if ($IP) {
     Write-Host "Public IP: $IP"
-    Pass "Public IP detected (clean text)"
+    Pass "Public IP detected"
 } else {
-    Manual "Unable to auto-detect public IP (manual check required)"
+    Warn "Public IP detection failed"
 }
 
 try {
-    Resolve-DnsName $IP -Type PTR -ErrorAction Stop | Out-Null
+    Resolve-DnsName $IP -Type PTR | Out-Null
     Pass "Reverse DNS (PTR) exists"
 } catch {
-    Fail "No reverse DNS (PTR) record"
+    Fail "No reverse DNS (PTR)"
 }
 
 # ------------------------------------------------------------
-Info "Outbound SMTP Port Availability (CRITICAL)"
+Info "Outbound SMTP (CRITICAL)"
 $SMTP_OK = $false
-$SMTP_Targets = @(
+$targets = @(
     @{Host="smtp.gmail.com"; Port=587},
     @{Host="smtp.gmail.com"; Port=465},
     @{Host="gmail-smtp-in.l.google.com"; Port=25}
 )
 
-foreach ($t in $SMTP_Targets) {
-    Write-Host "Testing SMTP $($t.Host):$($t.Port)"
+foreach ($t in $targets) {
     if (Test-NetConnection $t.Host -Port $t.Port -InformationLevel Quiet) {
-        Pass "Outbound SMTP port $($t.Port) reachable"
+        Pass "SMTP port $($t.Port) reachable"
         $SMTP_OK = $true
         break
-    } else {
-        Write-Host "  -> Timeout, trying next..."
     }
 }
 
 if (-not $SMTP_OK) {
-    Fail "All outbound SMTP ports blocked (25/587/465)"
-}
-
-# ------------------------------------------------------------
-Info "External SMTP Relay Compatibility"
-$Relays = @(
-    "smtp-relay.brevo.com",
-    "smtp.mailgun.org",
-    "email-smtp.us-east-1.amazonaws.com"
-)
-
-$Relay_OK = $false
-foreach ($r in $Relays) {
-    Write-Host "Testing relay $r:587"
-    if (Test-NetConnection $r -Port 587 -InformationLevel Quiet) {
-        Pass "SMTP relay reachable ($r)"
-        $Relay_OK = $true
-        break
-    } else {
-        Write-Host "  -> Relay unreachable, trying alternative..."
-    }
-}
-
-if (-not $Relay_OK) {
-    Manual "No external SMTP relay reachable (provider-level SMTP block likely)"
-}
-
-# ------------------------------------------------------------
-Info "Outbound HTTPS & API Access (automation readiness)"
-try {
-    Invoke-WebRequest https://api.github.com -UseBasicParsing -TimeoutSec 5 | Out-Null
-    Pass "Outbound HTTPS & APIs allowed"
-} catch {
-    Fail "Outbound HTTPS blocked (automation will fail)"
-}
-
-# ------------------------------------------------------------
-Info "Latency & Geo-IP Scoring"
-$Targets = @("1.1.1.1","8.8.8.8","9.9.9.9")
-$Times = @()
-
-foreach ($ip in $Targets) {
-    $ping = Test-Connection $ip -Count 2 -ErrorAction SilentlyContinue
-    if ($ping) {
-        $avg = ($ping | Measure-Object -Property ResponseTime -Average).Average
-        $Times += $avg
-    }
-}
-
-if ($Times.Count -gt 0) {
-    $AvgLatency = [Math]::Round(($Times | Measure-Object -Average).Average,2)
-    Write-Host "Average latency: $AvgLatency ms"
-    if ($AvgLatency -lt 80) {
-        Pass "Good global latency"
-    } else {
-        Manual "High latency (region-specific performance)"
-    }
-} else {
-    Manual "Latency test failed (ICMP restricted)"
-}
-
-try {
-    $Country = Invoke-WebRequest https://ipinfo.io/country -UseBasicParsing -TimeoutSec 5
-    Write-Host "Server country: $($Country.Content.Trim())"
-} catch {
-    Manual "Geo-IP lookup failed"
+    Fail "All outbound SMTP ports blocked"
 }
 
 # ------------------------------------------------------------
@@ -170,17 +186,17 @@ Info "Docker / Container Readiness"
 if (Get-Command docker -ErrorAction SilentlyContinue) {
     Pass "Docker available"
 } else {
-    Manual "Docker not installed (can be installed later)"
+    Warn "Docker not installed"
 }
 
 # ------------------------------------------------------------
 Write-Host "================ FINAL RESULT ================="
 Write-Host "PASS   : $PASS"
 Write-Host "FAIL   : $FAIL"
-Write-Host "MANUAL : $MANUAL"
+Write-Host "WARN   : $MANUAL"
 Write-Host "---------------------------------------------"
 
-if ($FAIL -eq 0 -and $PASS -ge 8) {
+if ($FAIL -eq 0 -and $PASS -ge 12) {
     Write-Host "FINAL VERDICT: SAFE TO BUY & USE LONG-TERM" -ForegroundColor Green
 } elseif ($FAIL -le 2) {
     Write-Host "FINAL VERDICT: CONDITIONAL - REVIEW WARNINGS" -ForegroundColor Yellow
