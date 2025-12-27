@@ -2,7 +2,7 @@
 # ============================================================
 # VPS INFRASTRUCTURE PRE-FLIGHT CHECK (LINUX)
 # Purpose : Decide if a VPS is SAFE for long-term usage
-# Includes: Hardware, Storage, Network, SMTP, Automation
+# Includes: Hardware, Storage, Network, SMTP, Automation, Geo Location
 # ============================================================
 
 set +e
@@ -135,37 +135,89 @@ PTR=$(timeout_cmd "dig -x $PUBLIC_IP +short")
 info "Geo Location (Country & City)"
 GEO_SUCCESS=false
 
-# Primary: ipinfo.io
-GEO_INFO=$(timeout_cmd "curl -fsS 'https://ipinfo.io/$PUBLIC_IP/json'")
-if [[ $? -eq 0 ]] && [[ -n "$GEO_INFO" ]]; then
-  COUNTRY=$(echo "$GEO_INFO" | grep '"country"' | cut -d'"' -f4)
-  REGION=$(echo "$GEO_INFO" | grep '"region"' | cut -d'"' -f4)
-  CITY=$(echo "$GEO_INFO" | grep '"city"' | cut -d'"' -f4)
-  ISP=$(echo "$GEO_INFO" | grep '"org"' | cut -d'"' -f4)
-  
-  echo "Country   : ${COUNTRY:-Unknown}"
-  echo "Region    : ${REGION:-Unknown}"
-  echo "City      : ${CITY:-Unknown}"
-  echo "ISP       : ${ISP:-Unknown}"
-  pass "Geo-location detected (ipinfo.io)"
-  GEO_SUCCESS=true
+# Check if jq is available for JSON parsing
+if command -v jq &>/dev/null; then
+  JQ_AVAILABLE=true
+else
+  JQ_AVAILABLE=false
 fi
 
-# Fallback: ip-api.com
-if [[ "$GEO_SUCCESS" = false ]]; then
-  GEO_INFO=$(timeout_cmd "curl -fsS 'http://ip-api.com/json/$PUBLIC_IP'")
-  if [[ $? -eq 0 ]] && [[ -n "$GEO_INFO" ]]; then
-    COUNTRY=$(echo "$GEO_INFO" | grep '"country"' | cut -d'"' -f4)
-    REGION=$(echo "$GEO_INFO" | grep '"regionName"' | cut -d'"' -f4)
-    CITY=$(echo "$GEO_INFO" | grep '"city"' | cut -d'"' -f4)
-    ISP=$(echo "$GEO_INFO" | grep '"isp"' | cut -d'"' -f4)
+# Primary: ipinfo.io (with better error handling)
+if [[ "$JQ_AVAILABLE" = true ]]; then
+  # Using jq for proper JSON parsing
+  GEO_INFO=$(timeout_cmd "curl -fsS -H 'Accept: application/json' 'https://ipinfo.io/$PUBLIC_IP/json' 2>/dev/null")
+  if [[ $? -eq 0 ]] && [[ -n "$GEO_INFO" ]] && echo "$GEO_INFO" | jq -e '.country' >/dev/null 2>&1; then
+    COUNTRY=$(echo "$GEO_INFO" | jq -r '.country // "Unknown"')
+    REGION=$(echo "$GEO_INFO" | jq -r '.region // "Unknown"')
+    CITY=$(echo "$GEO_INFO" | jq -r '.city // "Unknown"')
+    ISP=$(echo "$GEO_INFO" | jq -r '.org // "Unknown"')
+    
+    echo "Country   : ${COUNTRY}"
+    echo "Region    : ${REGION}"
+    echo "City      : ${CITY}"
+    echo "ISP       : ${ISP}"
+    pass "Geo-location detected (ipinfo.io)"
+    GEO_SUCCESS=true
+  fi
+else
+  # Fallback to grep method
+  GEO_INFO=$(timeout_cmd "curl -fsS 'https://ipinfo.io/$PUBLIC_IP/json' 2>/dev/null")
+  if [[ $? -eq 0 ]] && [[ -n "$GEO_INFO" ]] && echo "$GEO_INFO" | grep -q '"country"'; then
+    COUNTRY=$(echo "$GEO_INFO" | grep -o '"country":"[^"]*"' | cut -d'"' -f4)
+    REGION=$(echo "$GEO_INFO" | grep -o '"region":"[^"]*"' | cut -d'"' -f4)
+    CITY=$(echo "$GEO_INFO" | grep -o '"city":"[^"]*"' | cut -d'"' -f4)
+    ISP=$(echo "$GEO_INFO" | grep -o '"org":"[^"]*"' | cut -d'"' -f4)
     
     echo "Country   : ${COUNTRY:-Unknown}"
     echo "Region    : ${REGION:-Unknown}"
     echo "City      : ${CITY:-Unknown}"
     echo "ISP       : ${ISP:-Unknown}"
-    pass "Geo-location detected (ip-api.com)"
+    pass "Geo-location detected (ipinfo.io)"
     GEO_SUCCESS=true
+  fi
+fi
+
+# Fallback: ip-api.com (with rate limit handling)
+if [[ "$GEO_SUCCESS" = false ]]; then
+  sleep 1  # Small delay to avoid rate limiting
+  if [[ "$JQ_AVAILABLE" = true ]]; then
+    # Using jq for proper JSON parsing
+    GEO_INFO=$(timeout_cmd "curl -fsS 'http://ip-api.com/json/$PUBLIC_IP' 2>/dev/null")
+    if [[ $? -eq 0 ]] && [[ -n "$GEO_INFO" ]] && echo "$GEO_INFO" | jq -e '.country' >/dev/null 2>&1; then
+      COUNTRY=$(echo "$GEO_INFO" | jq -r '.country // "Unknown"')
+      REGION=$(echo "$GEO_INFO" | jq -r '.regionName // "Unknown"')
+      CITY=$(echo "$GEO_INFO" | jq -r '.city // "Unknown"')
+      ISP=$(echo "$GEO_INFO" | jq -r '.isp // "Unknown"')
+      
+      echo "Country   : ${COUNTRY}"
+      echo "Region    : ${REGION}"
+      echo "City      : ${CITY}"
+      echo "ISP       : ${ISP}"
+      pass "Geo-location detected (ip-api.com)"
+      GEO_SUCCESS=true
+    fi
+  else
+    # Fallback to grep method with better parsing
+    GEO_INFO=$(timeout_cmd "curl -fsS 'http://ip-api.com/json/$PUBLIC_IP' 2>/dev/null")
+    if [[ $? -eq 0 ]] && [[ -n "$GEO_INFO" ]] && echo "$GEO_INFO" | grep -q '"country"'; then
+      # First check if it's a rate limit error
+      if echo "$GEO_INFO" | grep -q '"status":"fail"'; then
+        manual "Geo-location API rate limited (ip-api.com)"
+      else
+        # Extract values properly
+        COUNTRY=$(echo "$GEO_INFO" | grep -o '"country":"[^"]*"' | cut -d'"' -f4)
+        REGION=$(echo "$GEO_INFO" | grep -o '"regionName":"[^"]*"' | cut -d'"' -f4)
+        CITY=$(echo "$GEO_INFO" | grep -o '"city":"[^"]*"' | cut -d'"' -f4)
+        ISP=$(echo "$GEO_INFO" | grep -o '"isp":"[^"]*"' | cut -d'"' -f4)
+        
+        echo "Country   : ${COUNTRY:-Unknown}"
+        echo "Region    : ${REGION:-Unknown}"
+        echo "City      : ${CITY:-Unknown}"
+        echo "ISP       : ${ISP:-Unknown}"
+        pass "Geo-location detected (ip-api.com)"
+        GEO_SUCCESS=true
+      fi
+    fi
   fi
 fi
 
