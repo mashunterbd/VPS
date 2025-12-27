@@ -11,7 +11,7 @@ function Pass($m){ Write-Host "[PASS]  $m" -ForegroundColor Green;  $global:PASS
 function Fail($m){ Write-Host "[FAIL]  $m" -ForegroundColor Red;    $global:FAIL++ }
 function Warn($m){ Write-Host "[WARN]  $m" -ForegroundColor Yellow; $global:WARN++ }
 function Info($m){ Write-Host "`n==> $m" -ForegroundColor Cyan }
-function Data($label, $value){ Write-Host "    $label : $value" -ForegroundColor White }
+function Show($label, $value){ Write-Host "    $label : $value" -ForegroundColor White }
 
 Write-Host "============================================================" -ForegroundColor Magenta
 Write-Host " VPS PRE-PURCHASE & POST-PURCHASE CHECK (WINDOWS)" -ForegroundColor Magenta
@@ -23,29 +23,29 @@ Write-Host "Scan started at: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n"
 Info "System Information"
 $os = Get-CimInstance Win32_OperatingSystem
 $cs = Get-CimInstance Win32_ComputerSystem
-Data "OS Name" "$($os.Caption)"
-Data "OS Architecture" "$($os.OSArchitecture)"
-Data "OS Build" "$($os.BuildNumber)"
-Data "Computer Name" "$($cs.Name)"
-Data "Manufacturer" "$($cs.Manufacturer)"
-Data "Model" "$($cs.Model)"
-Data "System Type" "$($cs.SystemType)"
-Data "Boot Time" "$($os.LastBootUpTime)"
+Show "OS Name" "$($os.Caption)"
+Show "OS Architecture" "$($os.OSArchitecture)"
+Show "OS Build" "$($os.BuildNumber)"
+Show "Computer Name" "$($cs.Name)"
+Show "Manufacturer" "$($cs.Manufacturer)"
+Show "Model" "$($cs.Model)"
+Show "System Type" "$($cs.SystemType)"
+Show "Boot Time" "$($os.LastBootUpTime)"
 $uptime = (Get-Date) - $os.LastBootUpTime
-Data "Uptime" "$($uptime.Days)d $($uptime.Hours)h $($uptime.Minutes)m"
+Show "Uptime" "$($uptime.Days)d $($uptime.Hours)h $($uptime.Minutes)m"
 Pass "System information collected"
 
 # ------------------------------------------------------------
 Info "CPU & Virtualization Details"
 $cpu = Get-CimInstance Win32_Processor
-Data "CPU Model" "$($cpu.Name)"
-Data "Manufacturer" "$($cpu.Manufacturer)"
-Data "Cores" "$($cpu.NumberOfCores)"
-Data "Logical Processors" "$($cpu.NumberOfLogicalProcessors)"
-Data "Max Clock Speed" "$($cpu.MaxClockSpeed) MHz"
-Data "Current Clock Speed" "$($cpu.CurrentClockSpeed) MHz"
-Data "L2 Cache Size" "$($cpu.L2CacheSize) KB"
-Data "L3 Cache Size" "$($cpu.L3CacheSize) KB"
+Show "CPU Model" "$($cpu.Name)"
+Show "Manufacturer" "$($cpu.Manufacturer)"
+Show "Cores" "$($cpu.NumberOfCores)"
+Show "Logical Processors" "$($cpu.NumberOfLogicalProcessors)"
+Show "Max Clock Speed" "$($cpu.MaxClockSpeed) MHz"
+Show "Current Clock Speed" "$($cpu.CurrentClockSpeed) MHz"
+Show "L2 Cache Size" "$($cpu.L2CacheSize) KB"
+Show "L3 Cache Size" "$($cpu.L3CacheSize) KB"
 
 if ($cpu.VirtualizationFirmwareEnabled) {
     Pass "CPU virtualization enabled (nested virtualization possible)"
@@ -56,7 +56,7 @@ if ($cpu.VirtualizationFirmwareEnabled) {
 # Check if running in VM
 $hypervisor = Get-CimInstance Win32_ComputerSystem | Select-Object -ExpandProperty Model
 if ($hypervisor -match "Virtual|VMware|HVM|KVM|Xen|QEMU") {
-    Data "Hypervisor Type" "$hypervisor"
+    Show "Hypervisor Type" "$hypervisor"
     Pass "Running in virtualized environment (as expected for VPS)"
 } else {
     Warn "Does not appear to be virtualized (check if this is bare metal)"
@@ -69,10 +69,10 @@ $freeRAM = [Math]::Round($os.FreePhysicalMemory / 1MB, 2)
 $usedRAM = [Math]::Round($totalRAM - $freeRAM, 2)
 $usedPct = [Math]::Round(($usedRAM / $totalRAM) * 100, 2)
 
-Data "Total RAM" "$totalRAM GB"
-Data "Used RAM" "$usedRAM GB ($usedPct%)"
-Data "Free RAM" "$freeRAM GB"
-Data "Available RAM" "$([Math]::Round($os.FreePhysicalMemory / 1MB, 2)) GB"
+Show "Total RAM" "$totalRAM GB"
+Show "Used RAM" "$usedRAM GB ($usedPct%)"
+Show "Free RAM" "$freeRAM GB"
+Show "Available RAM" "$([Math]::Round($os.FreePhysicalMemory / 1MB, 2)) GB"
 
 if ($totalRAM -ge 2) {
     Pass "Adequate RAM for VPS operations ($totalRAM GB)"
@@ -87,10 +87,10 @@ Info "Storage Analysis"
 $diskCount = 0
 Get-CimInstance Win32_DiskDrive | ForEach-Object {
     $diskCount++
-    Data "Disk $diskCount Model" "$($_.Model)"
-    Data "Disk $diskCount Size" "$([Math]::Round($_.Size / 1GB, 2)) GB"
-    Data "Disk $diskCount Interface" "$($_.InterfaceType)"
-    Data "Disk $diskCount Status" "$($_.Status)"
+    Show "Disk $diskCount Model" "$($_.Model)"
+    Show "Disk $diskCount Size" "$([Math]::Round($_.Size / 1GB, 2)) GB"
+    Show "Disk $diskCount Interface" "$($_.InterfaceType)"
+    Show "Disk $diskCount Status" "$($_.Status)"
 }
 Pass "Physical disk information collected"
 
@@ -101,10 +101,10 @@ Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | ForEach-Object {
     $usedSize = [Math]::Round($totalSize - $freeSize, 2)
     $usedPct = [Math]::Round(($usedSize / $totalSize) * 100, 2)
     
-    Data "Volume $($_.DeviceID) Total" "$totalSize GB"
-    Data "Volume $($_.DeviceID) Used" "$usedSize GB ($usedPct%)"
-    Data "Volume $($_.DeviceID) Free" "$freeSize GB"
-    Data "Volume $($_.DeviceID) FS" "$($_.FileSystem)"
+    Show "Volume $($_.DeviceID) Total" "$totalSize GB"
+    Show "Volume $($_.DeviceID) Used" "$usedSize GB ($usedPct%)"
+    Show "Volume $($_.DeviceID) Free" "$freeSize GB"
+    Show "Volume $($_.DeviceID) FS" "$($_.FileSystem)"
     
     if ($usedPct -gt 90) {
         Fail "Volume $($_.DeviceID) critically full ($usedPct%)"
@@ -118,9 +118,9 @@ Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | ForEach-Object {
 # ------------------------------------------------------------
 Info "Network Adapters"
 Get-CimInstance Win32_NetworkAdapter -Filter "NetEnabled='True'" | ForEach-Object {
-    Data "Adapter" "$($_.Name)"
-    Data "Status" "$($_.NetConnectionStatus)"
-    Data "Speed" "$($_.Speed)"
+    Show "Adapter" "$($_.Name)"
+    Show "Status" "$($_.NetConnectionStatus)"
+    Show "Speed" "$($_.Speed)"
 }
 Pass "Network adapter information collected"
 
@@ -166,7 +166,7 @@ if ($dnsSuccess -eq $dnsTests.Count) {
 # DNS Server Check
 $dnsServers = Get-DnsClientServerAddress -AddressFamily IPv4 | Where-Object {$_.ServerAddresses.Count -gt 0}
 if ($dnsServers) {
-    Data "DNS Servers" "$($dnsServers.ServerAddresses -join ', ')"
+    Show "DNS Servers" "$($dnsServers.ServerAddresses -join ', ')"
     Pass "DNS servers configured"
 } else {
     Fail "No DNS servers configured"
@@ -194,15 +194,15 @@ foreach ($src in $ipSources) {
 }
 
 if ($IP) {
-    Data "Public IP" "$IP"
+    Show "Public IP" "$IP"
     Pass "Public IP detected successfully"
     
     # Get IP geolocation info
     try {
         $ipInfo = Invoke-RestMethod -Uri "https://ipinfo.io/$IP/json" -TimeoutSec 5
-        Data "IP Location" "$($ipInfo.city), $($ipInfo.region), $($ipInfo.country)"
-        Data "IP Organization" "$($ipInfo.org)"
-        Data "IP Timezone" "$($ipInfo.timezone)"
+        Show "IP Location" "$($ipInfo.city), $($ipInfo.region), $($ipInfo.country)"
+        Show "IP Organization" "$($ipInfo.org)"
+        Show "IP Timezone" "$($ipInfo.timezone)"
         Pass "IP geolocation data retrieved"
     } catch {
         Warn "Could not retrieve IP geolocation data"
@@ -216,7 +216,7 @@ Info "Reverse DNS (PTR Record)"
 if ($IP) {
     try {
         $ptr = Resolve-DnsName $IP -Type PTR -ErrorAction Stop
-        Data "PTR Record" "$($ptr.NameHost)"
+        Show "PTR Record" "$($ptr.NameHost)"
         Pass "Reverse DNS (PTR) exists - good for email reputation"
     } catch {
         Fail "No reverse DNS (PTR) - may affect email deliverability"
@@ -266,7 +266,7 @@ Info "Firewall Status"
 try {
     $fwProfiles = Get-NetFirewallProfile
     foreach ($profile in $fwProfiles) {
-        Data "$($profile.Name) Profile" "Enabled: $($profile.Enabled)"
+        Show "$($profile.Name) Profile" "Enabled: $($profile.Enabled)"
     }
     Pass "Firewall status checked"
 } catch {
@@ -286,7 +286,7 @@ $software = @(
 foreach ($sw in $software) {
     if (Get-Command $sw.Command -ErrorAction SilentlyContinue) {
         $version = & $sw.Command --version 2>$null
-        Data "$($sw.Name)" "Installed ($version)"
+        Show "$($sw.Name)" "Installed ($version)"
         Pass "$($sw.Name) available"
     } else {
         Info "    $($sw.Name) not installed"
@@ -314,7 +314,7 @@ Info "Performance Counters"
 try {
     $cpuLoad = Get-Counter '\Processor(_Total)\% Processor Time' | Select-Object -ExpandProperty CounterSamples | Select-Object -ExpandProperty CookedValue
     $cpuLoad = [Math]::Round($cpuLoad, 2)
-    Data "Current CPU Usage" "$cpuLoad%"
+    Show "Current CPU Usage" "$cpuLoad%"
     
     if ($cpuLoad -lt 50) {
         Pass "CPU load is normal ($cpuLoad%)"
@@ -353,9 +353,9 @@ try {
 Write-Host "`n============================================================" -ForegroundColor Magenta
 Write-Host " FINAL RESULTS" -ForegroundColor Magenta
 Write-Host "============================================================" -ForegroundColor Magenta
-Data "Total PASS" "$PASS"
-Data "Total FAIL" "$FAIL"
-Data "Total WARN" "$WARN"
+Show "Total PASS" "$PASS"
+Show "Total FAIL" "$FAIL"
+Show "Total WARN" "$WARN"
 Write-Host "------------------------------------------------------------"
 
 # Decision Logic
