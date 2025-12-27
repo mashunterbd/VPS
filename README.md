@@ -16,6 +16,9 @@ You can use it **before buying**, **right after buying**, and **for long-term va
 ```
 curl -fsSL https://raw.githubusercontent.com/mashunterbd/VPS/refs/heads/main/vps-check.sh | bash
 ```
+```
+curl -fsSL https://raw.githubusercontent.com/mashunterbd/VPS/refs/heads/main/vps-check2.sh | bash
+```
 
 ---
 
